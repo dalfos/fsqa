@@ -1,0 +1,241 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+use Sys::Syslog qw(:standard :macros);
+use DBI;
+use IO::File;
+use Fcntl qw(:flock);
+use File::Copy;
+use Data::UUID;
+
+my $arcdir = '/var/spool/fsqa/audio_archive/';
+my $lock = '/var/spool/fsqa/temp/fsqa_proc_rec.lock';
+my $results = '/var/spool/fsqa/temp/fsqa_proc_rec.results';
+
+my $wavfile;
+my $nofork;
+my $verbose;
+
+my $ok = GetOptions(
+    'wav=s'       => \$wavfile,
+    'nofork'      => \$nofork,
+    'verbose'     => \$verbose,
+    );
+
+
+if( not $ok or not $wavfile or scalar(@ARGV) > 0 )
+{
+    print STDERR "Usage: $0 --wav=X.wav ...\n",
+    "Options:\n",
+    "  --wav=X.wav     recording file\n",
+    "  --nofork        prevent forking\n",
+    "  --verbose       print extra information\n",    
+    "\n";
+    exit(1);
+}
+
+if( not -r $wavfile )
+{
+    die("Cannot read $wavfile");
+}
+
+
+if( not $nofork )
+{
+    my $pid = fork();
+    die($!) unless defined($pid);
+    if( $pid != 0 )
+    {
+        exit(0);
+    }
+
+    verbose('Forked');
+}
+
+
+openlog('fsqa_proc_rec', '', LOG_USER);
+
+my $dbh = eval {
+    DBI->connect(
+        'DBI:mysql:database=fsqa', 'fsqa_rw', 'EVai2xee',
+        { RaiseError => 1, PrintError => 0, AutoCommit => 1 });
+};
+
+check_eval_error();
+
+
+my $fname = $wavfile;
+$fname =~ s/.+\///; #chop off file path
+
+my $timestamp;
+my $uuid;
+my $srcname;
+if( $fname =~ /^(\d+)_([0-9a-f-]{36})_(\w+)/ )
+{
+    $timestamp = $1;
+    $uuid = $2;
+    $srcname = $3;
+}
+else
+{
+    my $msg = 'Cannot extract UUID and timestamp from file name: ' . $fname;
+    syslog(LOG_WARNING, $msg);
+    verbose($msg);
+    my $ug = Data::UUID->new;
+    $timestamp = time();
+    $uuid = $ug->create_str();
+    $srcname = $fname;    
+}
+
+my $srcaudio;
+my $good_similarity;
+my $good_mos;
+
+{
+    my $sth = $dbh->prepare
+        ('SELECT WAV_FILE, GOOD_SIMILARITY_PC, GOOD_MOS ' .
+         'FROM FSQA_SOUNDFILES WHERE PROFILE_NAME=?');
+    $sth->execute($srcname);
+    my $r = $sth->fetchrow_arrayref();
+    $sth->finish();
+    
+    if( defined($r) )
+    {
+        $srcaudio = $r->[0];
+        $good_similarity = $r->[1];
+        $good_mos = $r->[2];
+    }
+    else
+    {
+        $sth->execute('default');
+        $r = $sth->fetchrow_arrayref();
+        $sth->finish();
+        if( defined($r) )
+        {
+            $srcaudio = $r->[0];
+            $good_similarity = $r->[1];
+            $good_mos = $r->[2];
+        }
+        else
+        {
+            critical('Cannot find the source audio in FSQA_SOUNDFILES');
+        }
+    }
+}
+
+if( not -r $srcaudio )
+{
+    critical('Source audio ' . $srcaudio . ' is not readable');
+}
+
+my $lockfh = IO::File->new($lock, 'a') or
+    critical("Cannot open $lock: $!");
+flock($lockfh, LOCK_EX) or die("Cannot flock: $!");
+verbose('Acquired exclusive lock');
+
+{
+    my $status = system
+        ('/opt/fsqa/aqua_score ' .
+         $srcaudio . ' ' . $wavfile . '> ' . $results);
+    
+    if( $status != 0 )
+    {
+        critical('aqua-v returned error status');
+    }
+}
+
+my $similarity = 0.0;
+my $mos = 0.0;
+
+my $fh = IO::File->new($results) or
+    critical("Cannot open $results: $!");
+
+while(my $line = $fh->getline())
+{
+    if( $line =~ /Percent\s+value\s+([0-9.e+]+)/ )
+    {
+        $similarity = $1;
+    }
+    elsif( $line =~ /MOS\s+value\s+([0-9.e+]+)/ )
+    {
+        $mos = $1;
+    }
+}
+
+$fh->close();
+    
+flock($lockfh, LOCK_UN) or die("Cannot flock: $!");
+verbose('Released exclusive lock');
+
+my $is_good = ( $similarity >= $good_similarity and
+                 $mos >= $good_mos ) ? 1:0;
+
+
+my $msg =
+    sprintf('%d %s: GOOD=%d, Similarity=%g, MOS=%g',
+            $timestamp, $srcname, $is_good,
+            $similarity, $mos);
+verbose($msg);
+syslog(LOG_INFO, $msg);
+
+eval {$dbh->do
+          ('INSERT FSQA_TESTRESULTS ' .
+           '(TEST_TIMESTAMP, CALL_UUID, SRC_NAME, SIMILARITY_PC, MOS) ' .
+           'VALUES(?,?,?,?,?)',
+           undef,
+           $timestamp, $uuid, $srcname, $similarity, $mos);
+};
+
+check_eval_error();
+    
+$dbh->disconnect();
+
+if( $is_good )
+{
+    verbose('Deleting ' . $wavfile);
+    unlink($wavfile) or
+        critical("Cannot remove $wavfile: $!");
+}
+else
+{
+    verbose('Moving ' . $wavfile . ' to ' . $arcdir);
+    move($wavfile, $arcdir)
+        or critical("Cannot move $wavfile to $arcdir: $!");
+}
+    
+
+exit(0);
+
+
+
+sub check_eval_error
+{
+    if( $@ )
+    {
+        critical($@);
+    }
+}
+
+
+sub critical
+{
+    print STDERR (@_, "\n");
+    syslog(LOG_CRIT, @_);
+    if( defined($dbh) )
+    {
+        $dbh->disconnect();
+    }
+    exit(1);
+}
+    
+    
+sub verbose
+{
+    if($verbose)
+    {
+        print(@_, "\n");
+    }
+}

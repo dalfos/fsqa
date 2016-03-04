@@ -1,0 +1,6 @@
+#!/bin/sh
+
+WAV=$1
+
+/opt/fsqa/fsqa_proc_rec --wav $WAV --verbose >>/var/tmp/fsqa.log 2>&1
+

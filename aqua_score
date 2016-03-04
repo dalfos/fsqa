@@ -1,0 +1,50 @@
+#!/bin/sh
+
+SRC=$1
+TST=$2
+
+if test x"$SRC" = x -o x"$TST" = x; then
+    echo "Usage: $0 SRCFILE TSTFILE" 1>&2
+    exit 1
+fi
+    
+if test `dirname $SRC` = '.'; then
+    SRC=`pwd`/$SRC
+fi
+
+if test `dirname $TST` = '.'; then
+    TST=`pwd`/$TST
+fi
+
+cd /tmp
+
+if test ! -r $SRC; then
+    echo "No such file: $SRC" 1>&2
+    exit 1
+fi
+
+if test ! -r $TST; then
+    echo "No such file: $TST" 1>&2
+    exit 1
+fi
+
+
+nice /opt/sevana/aqua-v /opt/sevana/aqua-v.lic \
+ -mode files -src file $SRC -tstf $TST \
+ -avlp off \
+ -smtnrm off \
+ -decor off \
+ -mprio off \
+ -acr auto \
+ -npnt auto \
+ -voip off \
+ -enorm off \
+ -g711 off \
+ -spfrcor off \
+ -grad off \
+ -tmc off \
+ -miter 1 \
+ -trim r 30 \
+ -ratem %mp
+
+

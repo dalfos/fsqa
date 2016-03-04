@@ -1,0 +1,91 @@
+<include>
+  <context name="fsqa">
+
+    <extension name="call_debug" continue="true">
+      <condition field="${call_debug}" expression="^true$" break="never">
+        <action application="info"/>
+      </condition>
+    </extension>
+
+    <extension name="intl_caller_normalize" continue="true">
+      <!-- remove plus sign before country code -->
+      <condition field="${caller_id_number}" expression="^\+(\d+)" break="on-true">
+        <action application="set" inline="true"
+                data="effective_caller_id_number=$1"/>
+      </condition>      
+      <!-- everything else -->
+      <condition>
+        <action application="set" inline="true"
+                data="effective_caller_id_number=${caller_id_number}"/>
+      </condition>
+    </extension>
+    
+    <extension name="pstn" continue="true">
+      <condition field="destination_number" expression="^pstn_(.+)$">
+        <action application="set" inline="true"
+                data="fsqa_source=pstn_$1_${effective_caller_id_number}"/>
+      </condition>
+    </extension>
+
+    <extension name="pstn_muted" continue="true">
+      <condition field="destination_number" expression="^pstnm_(.+)$">
+        <action application="set" inline="true"
+                data="fsqa_source=pstnm_$1_${effective_caller_id_number}"/>
+        <action application="set" inline="true"
+                data="fsqa_mute=true"/>
+      </condition>
+    </extension>
+    
+    <extension name="fsqa" continue="true">
+      <condition field="destination_number" expression="^(fsqa_.+)$">
+        <action application="set" inline="true"
+                data="fsqa_source=$1"/>
+      </condition>
+    </extension>
+
+    <extension name="fsqa_muted" continue="true">
+      <condition field="destination_number" expression="^(fsqam_.+)$">
+        <action application="set" inline="true"
+                data="fsqa_source=$1"/>
+        <action application="set" inline="true"
+                data="fsqa_mute=true"/>
+      </condition>
+    </extension>
+    
+    
+    <extension name="fsqa_process">
+      <condition field="${fsqa_source}" expression="^[a-z]" break="on-false">
+        <action application="set" data="jitterbuffer_msec=50:50"/>
+        <action application="set" data="RECORD_READ_ONLY=true"/>
+        <action application="set" data="send_silence_when_idle=400"/>
+        <action application="set" data="record_waste_resources=true"/>
+        <action application="set" data="rec_fname=${strepoch()}_${uuid}_${fsqa_source}.wav"/>
+        <action application="set" data="rec_full=/var/spool/fsqa/audio_rec/${rec_fname}"/>
+        <action application="set"
+         data="record_post_process_exec_app=system:/opt/fsqa/run_proc ${rec_full}"/>
+        <action application="record_session" data="${rec_full}"/>
+        <action application="answer"/>
+        <action application="playback" data="silence_stream://1000"/>
+      </condition>
+      <condition field="${fsqa_mute}" expression="^true$" break="never">
+        <action application="playback" data="silence_stream://120000"/>
+        <anti-action application="playback" data="/opt/sound/ITU-T_P_50_BRITISH_ENGLISH.wav"/>
+      </condition>
+      <condition>
+        <action application="playback" data="silence_stream://10000"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+
+    <extension name="speaker">
+      <condition field="destination_number" expression="^speaker$">
+        <action application="answer"/>
+        <action application="playback" data="silence_stream://1000"/>
+        <action application="playback" data="/opt/sound/ITU-T_P_50_BRITISH_ENGLISH.wav"/>
+        <action application="playback" data="silence_stream://10000"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+    
+  </context>
+</include>
