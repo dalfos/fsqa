@@ -147,3 +147,9 @@ EOT
 systemctl restart freeswitch
 ```
 
+
+Author and License
+------------------
+Copyright (c) 2016 Stanislav Sinyagin <ssinyagin@k-open.com>
+
+This software is distributed under the MIT license.
