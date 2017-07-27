@@ -29,7 +29,7 @@ if test ! -r $TST; then
 fi
 
 
-nice /opt/sevana/aqua-v /opt/sevana/aqua-v.lic \
+nice /opt/sevana/aqua-wb /opt/sevana/aqua-wb.lic \
  -mode files -src file $SRC -tstf $TST \
  -avlp off \
  -smtnrm off \

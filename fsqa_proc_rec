@@ -159,12 +159,12 @@ verbose('Acquired exclusive lock');
 
 {
     my $status = system
-        ('/opt/fsqa/aqua_score ' .
+        ('/opt/fsqa/aqua_score_voip_filters_on ' .
          $srcaudio . ' ' . $wavfile . '> ' . $results);
     
     if( $status != 0 )
     {
-        critical('aqua-v returned error status');
+        critical('aqua-wb returned error status');
     }
 }
 
